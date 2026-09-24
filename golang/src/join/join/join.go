@@ -2,6 +2,9 @@ package join
 
 import (
 	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/7574-sistemas-distribuidos/tp-coordinacion/common/middleware"
 )
@@ -40,10 +43,21 @@ func NewJoin(config JoinConfig) (*Join, error) {
 	return &Join{inputQueue: inputQueue, outputQueue: outputQueue}, nil
 }
 
+func (join *Join) handleSignals() {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	<-signals
+	slog.Info("SIGTERM signal received")
+	join.inputQueue.Close()
+	join.outputQueue.Close()
+}
+
 func (join *Join) Run() {
 	join.inputQueue.StartConsuming(func(msg middleware.Message, ack, nack func()) {
 		join.handleMessage(msg, ack, nack)
 	})
+
+	join.handleSignals()
 }
 
 func (join *Join) handleMessage(msg middleware.Message, ack func(), nack func()) {

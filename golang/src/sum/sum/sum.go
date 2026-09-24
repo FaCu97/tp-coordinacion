@@ -3,6 +3,9 @@ package sum
 import (
 	"fmt"
 	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/7574-sistemas-distribuidos/tp-coordinacion/common/fruititem"
 	"github.com/7574-sistemas-distribuidos/tp-coordinacion/common/messageprotocol/inner"
@@ -24,6 +27,15 @@ type Sum struct {
 	inputQueue     middleware.Middleware
 	outputExchange middleware.Middleware
 	fruitItemMap   map[string]fruititem.FruitItem
+}
+
+func (sum *Sum) handleSignals() {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	<-signals
+	slog.Info("SIGTERM signal received")
+	sum.inputQueue.Close()
+	sum.outputExchange.Close()
 }
 
 func NewSum(config SumConfig) (*Sum, error) {
@@ -56,6 +68,8 @@ func (sum *Sum) Run() {
 	sum.inputQueue.StartConsuming(func(msg middleware.Message, ack, nack func()) {
 		sum.handleMessage(msg, ack, nack)
 	})
+
+	sum.handleSignals()
 }
 
 func (sum *Sum) handleMessage(msg middleware.Message, ack func(), nack func()) {
