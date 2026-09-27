@@ -65,11 +65,10 @@ func NewSum(config SumConfig) (*Sum, error) {
 }
 
 func (sum *Sum) Run() {
+	go sum.handleSignals()
 	sum.inputQueue.StartConsuming(func(msg middleware.Message, ack, nack func()) {
 		sum.handleMessage(msg, ack, nack)
 	})
-
-	sum.handleSignals()
 }
 
 func (sum *Sum) handleMessage(msg middleware.Message, ack func(), nack func()) {

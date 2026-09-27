@@ -65,11 +65,11 @@ func (aggregation *Aggregation) handleSignals() {
 }
 
 func (aggregation *Aggregation) Run() {
+	go aggregation.handleSignals()
 	aggregation.inputExchange.StartConsuming(func(msg middleware.Message, ack, nack func()) {
 		aggregation.handleMessage(msg, ack, nack)
 	})
 
-	aggregation.handleSignals()
 }
 
 func (aggregation *Aggregation) handleMessage(msg middleware.Message, ack func(), nack func()) {

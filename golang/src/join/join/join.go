@@ -53,11 +53,11 @@ func (join *Join) handleSignals() {
 }
 
 func (join *Join) Run() {
+	go join.handleSignals()
 	join.inputQueue.StartConsuming(func(msg middleware.Message, ack, nack func()) {
 		join.handleMessage(msg, ack, nack)
 	})
 
-	join.handleSignals()
 }
 
 func (join *Join) handleMessage(msg middleware.Message, ack func(), nack func()) {
