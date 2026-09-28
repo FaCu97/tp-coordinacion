@@ -34,9 +34,18 @@ func (messageHandler *MessageHandler) SerializeEOFMessage() (*middleware.Message
 }
 
 func (messageHandler *MessageHandler) DeserializeResultMessage(message *middleware.Message) ([]fruititem.FruitItem, error) {
-	_, fruitRecords, _, err := inner.DeserializeMessage(message)
+	clientID, fruitRecords, isEof, err := inner.DeserializeMessage(message)
 	if err != nil {
 		return nil, err
 	}
+
+	if clientID != messageHandler.client_id {
+		return nil, nil
+	}
+
+	if isEof {
+		return nil, nil
+	}
+
 	return fruitRecords, nil
 }
