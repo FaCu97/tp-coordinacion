@@ -9,36 +9,21 @@ import (
 )
 
 type QueueMiddleware struct {
-	conn        *amqp.Connection
-	ch          *amqp.Channel
-	queueName   string
-	consumerTag string
+	baseMiddleware
+	queueName string
 }
 
 func NewQueueMiddleware(conn *amqp.Connection, ch *amqp.Channel, queueName string) *QueueMiddleware {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &QueueMiddleware{
-		conn:      conn,
-		ch:        ch,
+		baseMiddleware: baseMiddleware{
+			conn:   conn,
+			ch:     ch,
+			ctx:    ctx,
+			cancel: cancel,
+		},
 		queueName: queueName,
 	}
-}
-
-func (e *QueueMiddleware) Close() error {
-	if e.ch != nil {
-		err := e.ch.Close()
-		if err != nil && err != amqp.ErrClosed {
-			return ErrMessageMiddlewareClose
-		}
-	}
-
-	if e.conn != nil {
-		err := e.conn.Close()
-		if err != nil && err != amqp.ErrClosed {
-			return ErrMessageMiddlewareClose
-		}
-	}
-
-	return nil
 }
 
 func (e *QueueMiddleware) StartConsuming(callbackFunc func(msg Message, ack func(), nack func())) error {
@@ -49,7 +34,15 @@ func (e *QueueMiddleware) StartConsuming(callbackFunc func(msg Message, ack func
 
 	e.consumerTag = fmt.Sprintf("consumer-%s-%d", e.queueName, time.Now().UnixNano())
 
-	e.ch.Qos(1, 0, false)
+	err := e.ch.Qos(
+		10,    // prefetch count
+		0,     // prefetch size
+		false, // global
+	)
+	if err != nil {
+		e.Close()
+		return ErrMessageMiddlewareMessage
+	}
 
 	msgs, err := e.ch.Consume(
 		e.queueName,   // queue
@@ -65,22 +58,20 @@ func (e *QueueMiddleware) StartConsuming(callbackFunc func(msg Message, ack func
 		return ErrMessageMiddlewareMessage
 	}
 
-	for d := range msgs {
-		callbackFunc(Message{Body: string(d.Body)}, func() { d.Ack(false) }, func() { d.Nack(false, true) })
-	}
-	return nil
-}
+	e.wg.Add(1)
+	defer e.wg.Done()
 
-func (e *QueueMiddleware) StopConsuming() error {
-	if e.ch == nil {
-		e.Close()
-		return ErrMessageMiddlewareDisconnected
+	for {
+		select {
+		case <-e.ctx.Done():
+			return nil
+		case d, ok := <-msgs:
+			if !ok {
+				return ErrMessageMiddlewareDisconnected
+			}
+			callbackFunc(Message{Body: string(d.Body)}, func() { d.Ack(false) }, func() { d.Nack(false, true) })
+		}
 	}
-
-	if e.consumerTag != "" {
-		return e.ch.Cancel(e.consumerTag, false)
-	}
-	return nil
 }
 
 func (e *QueueMiddleware) Send(msg Message) error {
@@ -98,11 +89,11 @@ func (e *QueueMiddleware) Send(msg Message) error {
 		false,       // mandatory
 		false,       // immediate
 		amqp.Publishing{
-			ContentType: "text/plain",
-			Body:        []byte(msg.Body),
+			DeliveryMode: amqp.Persistent,
+			ContentType:  "text/plain",
+			Body:         []byte(msg.Body),
 		})
 	if err != nil {
-		e.Close()
 		return ErrMessageMiddlewareMessage
 	}
 	return nil

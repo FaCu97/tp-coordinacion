@@ -9,41 +9,25 @@ import (
 )
 
 type ExchangeMiddleware struct {
-	conn         *amqp.Connection
-	ch           *amqp.Channel
+	baseMiddleware
 	exchangeName string
 	routingKeys  []string
-	ConsumerTag  string
 	queueName    string
 }
 
 func NewExchangeMiddleware(conn *amqp.Connection, ch *amqp.Channel, exchangeName string, keys []string) *ExchangeMiddleware {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &ExchangeMiddleware{
-		conn:         conn,
-		ch:           ch,
+		baseMiddleware: baseMiddleware{
+			conn:   conn,
+			ch:     ch,
+			ctx:    ctx,
+			cancel: cancel,
+		},
 		exchangeName: exchangeName,
 		routingKeys:  keys,
-		ConsumerTag:  "",
 		queueName:    "",
 	}
-}
-
-func (e *ExchangeMiddleware) Close() error {
-	if e.ch != nil {
-		err := e.ch.Close()
-		if err != nil && err != amqp.ErrClosed {
-			return ErrMessageMiddlewareClose
-		}
-	}
-
-	if e.conn != nil {
-		err := e.conn.Close()
-		if err != nil && err != amqp.ErrClosed {
-			return ErrMessageMiddlewareClose
-		}
-	}
-
-	return nil
 }
 
 func (e *ExchangeMiddleware) StartConsuming(callbackFunc func(msg Message, ack func(), nack func())) error {
@@ -83,11 +67,21 @@ func (e *ExchangeMiddleware) StartConsuming(callbackFunc func(msg Message, ack f
 		}
 	}
 
-	e.ConsumerTag = fmt.Sprintf("consumer-%s-%d", e.queueName, time.Now().UnixNano())
+	e.consumerTag = fmt.Sprintf("consumer-%s-%d", e.queueName, time.Now().UnixNano())
+
+	err := e.ch.Qos(
+		10,    // prefetch count
+		0,     // prefetch size
+		false, // global
+	)
+	if err != nil {
+		e.Close()
+		return ErrMessageMiddlewareMessage
+	}
 
 	msgs, err := e.ch.Consume(
 		e.queueName,   // queue
-		e.ConsumerTag, // consumer
+		e.consumerTag, // consumer
 		false,         // auto-ack
 		false,         // exclusive
 		false,         // no-local
@@ -99,22 +93,20 @@ func (e *ExchangeMiddleware) StartConsuming(callbackFunc func(msg Message, ack f
 		return ErrMessageMiddlewareMessage
 	}
 
-	for d := range msgs {
-		callbackFunc(Message{Body: string(d.Body)}, func() { d.Ack(false) }, func() { d.Nack(false, true) })
-	}
-	return nil
-}
+	e.wg.Add(1)
+	defer e.wg.Done()
 
-func (e *ExchangeMiddleware) StopConsuming() error {
-	if e.ch == nil {
-		e.Close()
-		return ErrMessageMiddlewareDisconnected
+	for {
+		select {
+		case <-e.ctx.Done():
+			return nil
+		case d, ok := <-msgs:
+			if !ok {
+				return ErrMessageMiddlewareDisconnected
+			}
+			callbackFunc(Message{Body: string(d.Body)}, func() { d.Ack(false) }, func() { d.Nack(false, true) })
+		}
 	}
-
-	if e.ConsumerTag != "" {
-		return e.ch.Cancel(e.ConsumerTag, false)
-	}
-	return nil
 }
 
 func (e *ExchangeMiddleware) Send(msg Message) error {
@@ -133,11 +125,11 @@ func (e *ExchangeMiddleware) Send(msg Message) error {
 			false,          // mandatory
 			false,          // immediate
 			amqp.Publishing{
-				ContentType: "text/plain",
-				Body:        []byte(msg.Body),
+				DeliveryMode: amqp.Persistent,
+				ContentType:  "text/plain",
+				Body:         []byte(msg.Body),
 			})
 		if err != nil {
-			e.Close()
 			return ErrMessageMiddlewareMessage
 		}
 	}

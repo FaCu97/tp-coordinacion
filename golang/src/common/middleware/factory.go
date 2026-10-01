@@ -11,14 +11,14 @@ func connect(connectionSettings ConnSettings) (*amqp.Connection, *amqp.Channel, 
 
 	conn, err := amqp.Dial(url)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, ErrMessageMiddlewareDisconnected
 	}
 
 	ch, err := conn.Channel()
 
 	if err != nil {
 		conn.Close()
-		return nil, nil, err
+		return nil, nil, ErrMessageMiddlewareDisconnected
 	}
 	return conn, ch, nil
 }
@@ -26,7 +26,7 @@ func connect(connectionSettings ConnSettings) (*amqp.Connection, *amqp.Channel, 
 func CreateQueueMiddleware(queueName string, connectionSettings ConnSettings) (Middleware, error) {
 	conn, ch, err := connect(connectionSettings)
 	if err != nil {
-		return nil, err
+		return nil, ErrMessageMiddlewareDisconnected
 	}
 
 	q, err := ch.QueueDeclare(
@@ -35,13 +35,13 @@ func CreateQueueMiddleware(queueName string, connectionSettings ConnSettings) (M
 		false,     // delete when unused
 		false,     // exclusive
 		false,     // no-wait
-		nil,       // ver que pongo aca
+		nil,       // args
 	)
 
 	if err != nil {
 		ch.Close()
 		conn.Close()
-		return nil, err
+		return nil, ErrMessageMiddlewareMessage
 	}
 
 	queue := NewQueueMiddleware(conn, ch, q.Name)
@@ -52,13 +52,13 @@ func CreateQueueMiddleware(queueName string, connectionSettings ConnSettings) (M
 func CreateExchangeMiddleware(exchangeName string, keys []string, connectionSettings ConnSettings) (Middleware, error) {
 	conn, ch, err := connect(connectionSettings)
 	if err != nil {
-		return nil, err
+		return nil, ErrMessageMiddlewareDisconnected
 	}
 
 	err = ch.ExchangeDeclare(
 		exchangeName, // name
 		"direct",     // type
-		false,        // durability
+		true,         // durability
 		false,        // auto-deleted
 		false,        // internal
 		false,        // no-wait
@@ -67,7 +67,7 @@ func CreateExchangeMiddleware(exchangeName string, keys []string, connectionSett
 	if err != nil {
 		ch.Close()
 		conn.Close()
-		return nil, err
+		return nil, ErrMessageMiddlewareMessage
 	}
 
 	exchange := NewExchangeMiddleware(conn, ch, exchangeName, keys)
