@@ -29,6 +29,8 @@ type Aggregation struct {
 	outputQueue   middleware.Middleware
 	inputExchange middleware.Middleware
 	fruitItemMap  map[string]map[string]fruititem.FruitItem
+	eofCountMap   map[string]int
+	sumAmount     int
 	topSize       int
 }
 
@@ -51,6 +53,8 @@ func NewAggregation(config AggregationConfig) (*Aggregation, error) {
 		outputQueue:   outputQueue,
 		inputExchange: inputExchange,
 		fruitItemMap:  make(map[string]map[string]fruititem.FruitItem),
+		eofCountMap:   make(map[string]int),
+		sumAmount:     config.SumAmount,
 		topSize:       config.TopSize,
 	}, nil
 }
@@ -93,6 +97,13 @@ func (aggregation *Aggregation) handleMessage(msg middleware.Message, ack func()
 
 func (aggregation *Aggregation) handleEndOfRecordsMessage(clientID string) error {
 	slog.Info("Received End Of Records message")
+	aggregation.eofCountMap[clientID]++
+	//  Si todavía faltan EOFs por llegar de otros Sums, no hacemos nada más
+	if aggregation.eofCountMap[clientID] < aggregation.sumAmount {
+		return nil
+	}
+	slog.Info("Received End Of Records message")
+	slog.Info("All EOFs received for client. ", "client", clientID)
 
 	fruitTopRecords := aggregation.buildFruitTop(clientID)
 	message, err := inner.SerializeMessage(clientID, fruitTopRecords)
@@ -104,19 +115,20 @@ func (aggregation *Aggregation) handleEndOfRecordsMessage(clientID string) error
 		slog.Debug("While sending top message", "err", err)
 		return err
 	}
-
-	eofMessage := []fruititem.FruitItem{}
-	message, err = inner.SerializeMessage(clientID, eofMessage)
-	if err != nil {
-		slog.Debug("While serializing EOF message", "err", err)
-		return err
-	}
-	if err := aggregation.outputQueue.Send(*message); err != nil {
-		slog.Debug("While sending EOF message", "err", err)
-		return err
-	}
-
+	/*
+		eofMessage := []fruititem.FruitItem{}
+		message, err = inner.SerializeMessage(clientID, eofMessage)
+		if err != nil {
+			slog.Debug("While serializing EOF message", "err", err)
+			return err
+		}
+		if err := aggregation.outputQueue.Send(*message); err != nil {
+			slog.Debug("While sending EOF message", "err", err)
+			return err
+		}
+	*/
 	delete(aggregation.fruitItemMap, clientID)
+	delete(aggregation.eofCountMap, clientID)
 
 	return nil
 }

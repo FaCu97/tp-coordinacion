@@ -49,6 +49,8 @@ func (e *QueueMiddleware) StartConsuming(callbackFunc func(msg Message, ack func
 
 	e.consumerTag = fmt.Sprintf("consumer-%s-%d", e.queueName, time.Now().UnixNano())
 
+	e.ch.Qos(1, 0, false)
+
 	msgs, err := e.ch.Consume(
 		e.queueName,   // queue
 		e.consumerTag, // consumer
