@@ -35,7 +35,7 @@ func (e *QueueMiddleware) StartConsuming(callbackFunc func(msg Message, ack func
 	e.consumerTag = fmt.Sprintf("consumer-%s-%d", e.queueName, time.Now().UnixNano())
 
 	err := e.ch.Qos(
-		10,    // prefetch count
+		1,     // prefetch count
 		0,     // prefetch size
 		false, // global
 	)

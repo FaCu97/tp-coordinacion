@@ -70,7 +70,7 @@ func (e *ExchangeMiddleware) StartConsuming(callbackFunc func(msg Message, ack f
 	e.consumerTag = fmt.Sprintf("consumer-%s-%d", e.queueName, time.Now().UnixNano())
 
 	err := e.ch.Qos(
-		10,    // prefetch count
+		1,     // prefetch count
 		0,     // prefetch size
 		false, // global
 	)
@@ -132,6 +132,31 @@ func (e *ExchangeMiddleware) Send(msg Message) error {
 		if err != nil {
 			return ErrMessageMiddlewareMessage
 		}
+	}
+	return nil
+}
+
+func (e *ExchangeMiddleware) SendWithKey(msg Message, routeKey string) error {
+	if e.ch == nil {
+		e.Close()
+		return ErrMessageMiddlewareDisconnected
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err := e.ch.PublishWithContext(ctx,
+		e.exchangeName, // exchange
+		routeKey,       // routing key
+		false,          // mandatory
+		false,          // immediate
+		amqp.Publishing{
+			DeliveryMode: amqp.Persistent,
+			ContentType:  "text/plain",
+			Body:         []byte(msg.Body),
+		})
+	if err != nil {
+		return ErrMessageMiddlewareMessage
 	}
 	return nil
 }

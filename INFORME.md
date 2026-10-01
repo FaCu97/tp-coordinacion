@@ -1,10 +1,15 @@
-Redactar un breve informe en el archivo `INFORME.md` explicando el modo en que se coordinan las instancias de Sum y Aggregation, así como el modo en el que el sistema escala respecto a los clientes, grándes volúmens de datos y la cantidad de controles.
-
-El message handler del gateway, le asigna un uuid a cada cliente, para identificar luego los mensajes que transmite.
+Identificación de Clientes (Gateway):
+Al establecerse la conexión, el Message Handler del Gateway le asigna un UUID a cada cliente. Esto permite identificar los mensajes en el sistema y que los nodos mantengan el estado de múltiples clientes de forma concurrente sin mezclar sus datos.
 
 Sincronizacion del EOF del cliente:
-El cliente envia el EOF y lo recibe un Sum, ese Sum lo comunica por un exchange a todos los sums.
+Dado que la comunicación entre Gateway y Sum se da mediante una Work Queue, el mensaje EOF es consumido por un único Sum. Para notificar al resto, dicha réplica retransmite el EOF a través de un exchange de control a todos los sums.
+
 Para evitar condiciones de carrera es necesario que el QoS esté configurado con prefetch=1, así cuando Sum procesa el EOF, en la cola no hay mensajes pendientes de ese cliente.
 La precondicion necesaria es que el mensaje en procesamiento (que puede ser del mismo cliente del EOF), no falle ni vuelva al middleware.
 
-Al finalizar su procesamiento, cada réplica de Sum envía su propio mensaje de EOF hacia la siguiente etapa. El nodo Aggregation implementa una barrera de sincronización mediante un diccionario contador: espera recibir exactamente N mensajes de EOF por cada cliente (donde N es la cantidad de réplicas de Sum). Solo cuando todos los workers han confirmado su finalización, el Aggregator calcula y emite el Top de frutas resultante.
+Sharding y Barrera de Sincronización:
+Al finalizar su procesamiento, cada réplica de Sum realiza un sharding hasheando el nombre de la fruta para enviar los recuentos parciales de cada una a un único nodo Aggregation.
+Para saber cuándo terminar, cada Aggregation implementa una barrera de sincronización mediante un diccionario contador: espera recibir exactamente N mensajes de EOF por cada cliente (donde N es la cantidad de réplicas de Sum). Solo cuando todos los workers han confirmado su finalización, el Aggregator calcula y emite el Top de frutas resultante del cliente hacia el Join.
+
+Fusión de resultados:
+Finalmente, Join recibe los tops por parte de los Aggregation y cuando recibió los tops de todos los Aggregation para algún cliente, emite el top global.
